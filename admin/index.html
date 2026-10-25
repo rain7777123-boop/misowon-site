@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>문의함 | 미소원스킨앤바디</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <style>
+    :root { --paper: #FBF5F2; --blush: #F2E4E0; --ink: #2E2422; --ink-soft: #6B5A56; --rose: #9A5466; --line: #E3D3CE; }
+    [hidden] { display: none !important; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; word-break: keep-all; }
+    main { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
+    h1 { font-size: 1.25rem; margin: 0 0 20px; }
+    :focus-visible { outline: 3px solid var(--rose); outline-offset: 2px; }
+    button { font: inherit; cursor: pointer; }
+    .login { display: grid; gap: 10px; margin-top: 40px; }
+    .login label { font-weight: 700; }
+    .login input { font: inherit; font-size: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+    .primary { min-height: 48px; border: 0; border-radius: 999px; background: var(--rose); color: #fff; font-weight: 700; }
+    .msg { min-height: 1.5em; color: #A23B3B; font-weight: 700; }
+    .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .count { font-size: 2.6rem; font-weight: 700; line-height: 1; color: var(--rose); }
+    .count-label { color: var(--ink-soft); }
+    .ghost { min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink); }
+    .list { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 12px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+    .card.is-new { border-color: var(--rose); }
+    .meta { font-size: .85rem; color: var(--ink-soft); }
+    .name { font-size: 1.1rem; font-weight: 700; margin-top: 2px; }
+    .contact { display: inline-block; margin-top: 4px; padding: 6px 0; border: 0; background: none; color: var(--rose); font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
+    .body { margin-top: 8px; white-space: pre-wrap; }
+    .status { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 14px; }
+    .status button { min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink); }
+    .status button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 700; }
+    .empty { margin-top: 32px; color: var(--ink-soft); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>미소원스킨앤바디 문의함</h1>
+
+    <form class="login" id="login">
+      <label for="pw">관리자 비밀번호</label>
+      <input id="pw" type="password" autocomplete="current-password" required>
+      <button class="primary" type="submit">문의함 열기</button>
+      <p class="msg" id="login-msg" role="alert"></p>
+    </form>
+
+    <section id="inbox" hidden>
+      <div class="bar">
+        <div><div class="count" id="new-count">0</div><div class="count-label">새 문의</div></div>
+        <div>
+          <button class="ghost" id="reload" type="button">새로고침</button>
+          <button class="ghost" id="logout" type="button">잠그기</button>
+        </div>
+      </div>
+      <p class="msg" id="inbox-msg" role="alert"></p>
+      <ul class="list" id="list"></ul>
+      <p class="empty" id="empty" hidden>아직 들어온 문의가 없어요. 홈페이지 문의 폼으로 들어온 문의가 여기에 보여요.</p>
+    </section>
+  </main>
+
+  <script>
+    const STATUSES = ['새 문의', '연락함', '완료'];
+    const $ = (id) => document.getElementById(id);
+    const KEY = 'misowon-admin';
+
+    function getPw() { try { return sessionStorage.getItem(KEY) || ''; } catch { return ''; } }
+    function setPw(v) { try { v ? sessionStorage.setItem(KEY, v) : sessionStorage.removeItem(KEY); } catch {} }
+
+    async function api(method, body) {
+      const res = await fetch('/api/admin', {
+        method,
+        headers: { 'x-admin-password': getPw(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { lock('비밀번호가 맞지 않아요.'); throw new Error('locked'); }
+      if (!res.ok) throw new Error(data.error || '불러오지 못했어요.');
+      return data;
+    }
+
+    function lock(message) {
+      setPw('');
+      $('inbox').hidden = true;
+      $('login').hidden = false;
+      $('login-msg').textContent = message || '';
+      $('pw').value = '';
+      $('pw').focus();
+    }
+
+    function fmt(iso) {
+      const d = new Date(iso);
+      return d.toLocaleString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function render(rows) {
+      $('new-count').textContent = rows.filter((r) => r.status === '새 문의').length;
+      $('empty').hidden = rows.length > 0;
+      const list = $('list');
+      list.replaceChildren();
+      for (const row of rows) {
+        const li = document.createElement('li');
+        li.className = 'card' + (row.status === '새 문의' ? ' is-new' : '');
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = fmt(row.created_at);
+
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = row.name;
+
+        const contact = document.createElement('button');
+        contact.type = 'button';
+        contact.className = 'contact';
+        contact.textContent = row.contact;
+        contact.addEventListener('click', async () => {
+          try { await navigator.clipboard.writeText(row.contact); contact.textContent = row.contact + ' (복사됨)'; }
+          catch { const range = document.createRange(); range.selectNodeContents(contact); const s = getSelection(); s.removeAllRanges(); s.addRange(range); }
+        });
+
+        li.append(meta, name, contact);
+        if (row.message) {
+          const body = document.createElement('p');
+          body.className = 'body';
+          body.textContent = row.message;
+          li.append(body);
+        }
+
+        const status = document.createElement('div');
+        status.className = 'status';
+        status.setAttribute('role', 'group');
+        status.setAttribute('aria-label', '처리 상태');
+        for (const s of STATUSES) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = s;
+          b.setAttribute('aria-pressed', String(row.status === s));
+          b.addEventListener('click', async () => {
+            if (row.status === s) return;
+            try { await api('PATCH', { id: row.id, status: s }); await load(); }
+            catch (e) { if (e.message !== 'locked') $('inbox-msg').textContent = e.message; }
+          });
+          status.append(b);
+        }
+        li.append(status);
+        list.append(li);
+      }
+    }
+
+    async function load() {
+      $('inbox-msg').textContent = '';
+      const { rows } = await api('GET');
+      $('login').hidden = true;
+      $('inbox').hidden = false;
+      render(rows);
+    }
+
+    $('login').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setPw($('pw').value);
+      $('login-msg').textContent = '';
+      try { await load(); } catch (err) { if (err.message !== 'locked') { $('login-msg').textContent = err.message; } }
+    });
+    $('reload').addEventListener('click', () => load().catch((e) => { if (e.message !== 'locked') $('inbox-msg').textContent = e.message; }));
+    $('logout').addEventListener('click', () => lock(''));
+
+    if (getPw()) load().catch(() => {}); else $('pw').focus();
+  </script>
+</body>
+</html>
